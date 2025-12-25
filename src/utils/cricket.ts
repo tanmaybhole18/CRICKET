@@ -1,4 +1,4 @@
-import { Team, Match, MatchStatus } from '@/types';
+import { Team, TeamStats, Match, MatchStatus } from '@/types';
 
 export const generateId = () => Math.random().toString(36).substr(2, 9);
 
@@ -10,7 +10,6 @@ export const formatOvers = (balls: number): string => {
 
 export const ballsToOversDecimal = (balls: number): number => {
     if (balls === 0) return 0;
-    // Standard NRR calculation: balls / 6
     return balls / 6;
 };
 
@@ -47,4 +46,113 @@ export const generateFixtures = (teams: Team[], totalOvers: number): Match[] => 
         }
     }
     return fixtures;
+};
+
+export const calculateStandings = (teams: Team[], matches: Match[]): TeamStats[] => {
+    const statsMap = new Map<string, TeamStats>();
+
+    // Initialize
+    teams.forEach(team => {
+        statsMap.set(team.id, {
+            ...team,
+            played: 0,
+            won: 0,
+            lost: 0,
+            tied: 0,
+            points: 0,
+            runsScored: 0,
+            ballsFaced: 0,
+            runsConceded: 0,
+            ballsBowled: 0,
+            nrr: 0
+        });
+    });
+
+    matches.forEach(match => {
+        if (match.status === 'completed') {
+            const teamA = statsMap.get(match.teamAId);
+            const teamB = statsMap.get(match.teamBId);
+            if (!teamA || !teamB) return;
+
+            teamA.played += 1;
+            teamB.played += 1;
+
+            // Points & Result
+            if (match.winnerId === teamA.id) {
+                teamA.won += 1;
+                teamB.lost += 1;
+                teamA.points += 2;
+            } else if (match.winnerId === teamB.id) {
+                teamB.won += 1;
+                teamA.lost += 1;
+                teamB.points += 2;
+            } else {
+                // Draw or Tie
+                teamA.tied += 1;
+                teamB.tied += 1;
+                teamA.points += 1;
+                teamB.points += 1;
+            }
+
+            // NRR Stats
+            const innA = match.innings[teamA.id];
+            if (innA) {
+                teamA.runsScored += innA.runs;
+                teamB.runsConceded += innA.runs;
+
+                // If All Out, use full overs for NRR calculation
+                const effectiveBalls = innA.wickets >= 10 ? match.totalOvers * 6 : innA.ballsFaced;
+
+                teamA.ballsFaced += effectiveBalls;
+                teamB.ballsBowled += effectiveBalls;
+            }
+
+            const innB = match.innings[teamB.id];
+            if (innB) {
+                teamB.runsScored += innB.runs;
+                teamA.runsConceded += innB.runs;
+
+                // If All Out, use full overs for NRR calculation
+                const effectiveBalls = innB.wickets >= 10 ? match.totalOvers * 6 : innB.ballsFaced;
+
+                teamB.ballsFaced += effectiveBalls;
+                teamA.ballsBowled += effectiveBalls;
+            }
+        }
+    });
+
+    const stats = Array.from(statsMap.values()).map(team => {
+        team.nrr = calculateNRR(team.runsScored, team.ballsFaced, team.runsConceded, team.ballsBowled);
+        return team;
+    });
+
+    // Sort: Points DESC, NRR DESC, Wins DESC
+    return stats.sort((a, b) => {
+        if (b.points !== a.points) return b.points - a.points;
+        if (b.nrr !== a.nrr) return b.nrr - a.nrr;
+        return b.won - a.won;
+    });
+};
+
+export const calculateScoreFromHistory = (history: import('@/types').BallEvent[]) => {
+    let runs = 0;
+    let wickets = 0;
+    let ballsFaced = 0; // Legal balls
+
+    history.forEach(event => {
+        if (event.startsWith('NB+') || event.startsWith('WD+')) {
+            const extraRuns = parseInt(event.split('+')[1]);
+            runs += 1 + extraRuns;
+        } else if (event === 'WD' || event === 'NB') {
+            runs += 1;
+        } else if (event === 'W') {
+            wickets += 1;
+            ballsFaced += 1;
+        } else {
+            runs += parseInt(event);
+            ballsFaced += 1;
+        }
+    });
+
+    return { runs, wickets, ballsFaced };
 };
