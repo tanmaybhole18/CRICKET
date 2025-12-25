@@ -121,6 +121,9 @@ export default function MatchPage() {
         return <div className="container p-8 text-center text-muted-foreground">Match Not Found</div>;
     }
 
+
+    const batInns = match.battingTeamId ? match.innings[match.battingTeamId] : null;
+
     const handleManualScore = () => {
         if (!match || !teamA || !teamB) return;
         const runs = parseInt(manualRuns);
@@ -167,6 +170,9 @@ export default function MatchPage() {
         });
     };
 
+    const isFirstInningsComplete = batInns && !target && (batInns.wickets >= 10 || batInns.ballsFaced >= match.totalOvers * 6);
+    const isMatchConcluded = target && batInns && (batInns.runs >= target || batInns.wickets >= 10 || batInns.ballsFaced >= match.totalOvers * 6);
+
     const handleScoring = (event: BallEvent) => {
         if (!match || !match.battingTeamId) return;
         const battingId = match.battingTeamId;
@@ -183,109 +189,48 @@ export default function MatchPage() {
             ballsFaced: stats.ballsFaced
         };
 
-
         const updatedMatch = {
             ...match,
             innings: { ...match.innings, [battingId]: newInnings }
         };
 
-        const isSecondInnings = !!match.bowlingTeamId && (match.bowlingTeamId !== match.teamAId || !!target); // Simple check if target exists or not actually
-
+        // If newly complete, just toast/notify but DO NOT change status
         // Check for Innings End (10 Wickets OR Overs Completed)
         const isAllOut = newInnings.wickets >= 10;
         const isOversCompleted = newInnings.ballsFaced >= match.totalOvers * 6;
 
-        // Win Logic (2nd Innings)
-        if (target) {
-            if (newInnings.runs >= target) {
-                const battingTeam = battingId === teamA.id ? teamA : teamB;
-                updateMatch({
-                    ...updatedMatch,
-                    status: 'completed',
-                    winnerId: battingId,
-                    result: `${battingTeam.name} won by ${10 - newInnings.wickets} wickets`
-                });
-                toast.success(`${battingTeam.name} won the match!`, {
-                    description: `Target of ${target} chased down in ${formatOvers(newInnings.ballsFaced)} overs.`,
-                    duration: 5000,
-                });
-                return;
-            }
-        }
-
         if (isAllOut || isOversCompleted) {
+            // Just toast
             if (target) {
-                // 2nd Innings Ends -> Defending Team Wins (or Tie)
-                const runsScored = newInnings.runs;
-                if (runsScored === target - 1) {
-                    // Tie
-                    updateMatch({
-                        ...updatedMatch,
-                        status: 'completed',
-                        winnerId: null,
-                        result: "Match Tied"
-                    });
-                    toast.info("Match Tied!", { duration: 5000 });
-                } else {
-                    // Defending Team Wins
-                    const bowlingTeamId = match.bowlingTeamId!; // Should be set
-                    const bowlingTeam = bowlingTeamId === teamA.id ? teamA : teamB;
-                    const margin = target - 1 - runsScored;
-                    updateMatch({
-                        ...updatedMatch,
-                        status: 'completed',
-                        winnerId: bowlingTeamId,
-                        result: `${bowlingTeam.name} won by ${margin} runs`
-                    });
-                    toast.success(`${bowlingTeam.name} won the match!`, {
-                        description: `Defended ${target} successfully by ${margin} runs.`,
-                        duration: 5000,
-                    });
+                if (newInnings.runs >= target) {
+                    toast.success("Target Chased! Match Won (Pending Confirmation)");
+                } else if (isAllOut || isOversCompleted) {
+                    // Check who won
+                    if (newInnings.runs === target - 1) toast.info("Match Tied! (Pending Confirmation)");
+                    else toast.info("Match Ended! Defending Team Won (Pending Confirmation)");
                 }
-                return;
             } else {
-                // 1st Innings Completed - Auto Switch
-                toast.success("Innings Completed! Switching...", {
-                    description: isAllOut ? "All Out!" : "Overs Limit Reached!",
-                    duration: 3000,
-                });
-
-                // Auto switch after short delay to let user see correct final state?
-                // React state updates are batched, but we want to show the final ball.
-                // Actually, if I update here, the re-render happens immediately with new innings.
-                // Let's do it immediately but maybe the UI handles it.
-                // We need to define newBatting/newBowling here.
-                const newBatting = match.bowlingTeamId;
-                const newBowling = match.battingTeamId;
-
-                updateMatch({
-                    ...updatedMatch,
-                    battingTeamId: newBatting,
-                    bowlingTeamId: newBowling
-                });
-                return;
+                toast.success("Innings Completed! (Pending Switch)");
             }
         }
 
-        // Over Completed Toast
+        // Simple Over Toast
         if (stats.ballsFaced > 0 && stats.ballsFaced % 6 === 0 && stats.ballsFaced !== currentInnings.ballsFaced) {
-            toast.info(`Over ${stats.ballsFaced / 6} Completed`, {
-                duration: 2000,
-            });
+            toast.info(`Over ${stats.ballsFaced / 6} Completed`, { duration: 2000 });
         }
 
         updateMatch(updatedMatch);
     };
 
-    // Components
-    const batInns = match.battingTeamId ? match.innings[match.battingTeamId] : null;
-    // const bowlInns = match.bowlingTeamId ? match.innings[match.bowlingTeamId] : null; UNUSED
 
     // Calculations
     const oversDecimal = batInns ? ballsToOversDecimal(batInns.ballsFaced) : 0; // eslint-disable-line @typescript-eslint/no-unused-vars
     const oversStr = batInns ? formatOvers(batInns.ballsFaced) : '0.0';
     const remainingBalls = match.totalOvers * 6 - (batInns?.ballsFaced || 0);
     const runsNeeded = target ? target - (batInns?.runs || 0) : 0;
+
+    // Disable scoring if innings/match is effectively over
+    const isScoringDisabled = isFirstInningsComplete || isMatchConcluded;
 
     return (
         <div className="container max-w-3xl mx-auto py-8 px-4">
@@ -344,15 +289,77 @@ export default function MatchPage() {
                     {match.status === 'live' && batInns && (
                         <div className="max-w-md mx-auto">
                             <div className="text-center mb-8 bg-card border rounded-xl p-4 shadow-sm">
-                                <div className="text-sm font-medium text-blue-500 mb-2">
-                                    {target ? `Target: ${target} (${runsNeeded} needed off ${remainingBalls} balls)` : `1st Innings`}
-                                </div>
+
+                                {runsNeeded > 0 ?
+
+                                    <div className="text-sm font-medium text-blue-500 mb-2">
+                                        {target ? `Target: ${target} (${runsNeeded} needed off ${remainingBalls} balls)` : `1st Innings`}
+                                    </div> :
+                                    <span className="text-sm font-medium text-green-500 mb-2">
+                                        Match Completed
+                                    </span>}
                                 <div className="text-[5rem] font-black leading-none bg-gradient-to-b from-foreground to-muted-foreground bg-clip-text text-transparent">
                                     {batInns.runs}/{batInns.wickets}
                                 </div>
                                 <div className="text-xl text-muted-foreground mt-2 font-mono">
                                     Overs: <span className="text-foreground font-bold">{oversStr}</span> / {match.totalOvers}
                                 </div>
+
+                                <div className="flex justify-center gap-2 h-8">
+                                    {isFirstInningsComplete && (
+                                        <Badge className="bg-black border border-green-500 text-green-500 hover:bg-green-500 hover:text-white">Innings Complete</Badge>
+                                    )}
+                                    {isFirstInningsComplete && (
+                                        <Button
+                                            onClick={() => setIsSwitchOpen(true)}
+                                            variant="destructive"
+                                            className="gap-2 animate-pulse h-8"
+                                        >
+                                            Start 2nd Innings
+                                        </Button>
+                                    )}
+                                    {isMatchConcluded && (
+                                        <Dialog>
+                                            <DialogTrigger asChild>
+                                                <Button variant="default" className="gap-2 mt-2 mb-4 h-8 bg-green-600 hover:bg-green-700 animate-pulse">
+                                                    <Trophy className="w-4 h-4" /> End Match & Show Result
+                                                </Button>
+                                            </DialogTrigger>
+                                            <DialogContent>
+                                                <DialogHeader>
+                                                    <DialogTitle>Confirm Match Result</DialogTitle>
+                                                    <DialogDescription>
+                                                        Are you sure you want to end the match? This will finalize the result.
+                                                    </DialogDescription>
+                                                </DialogHeader>
+                                                <DialogFooter>
+                                                    <DialogClose asChild>
+                                                        <Button variant="outline">Cancel</Button>
+                                                    </DialogClose>
+                                                    <Button onClick={() => {
+                                                        // Calculate Result Logic Here
+                                                        if (target && batInns) {
+                                                            const battingTeam = match.battingTeamId === teamA.id ? teamA : teamB;
+                                                            const bowlingTeam = match.bowlingTeamId === teamA.id ? teamA : teamB;
+
+                                                            if (batInns.runs >= target) {
+                                                                completeMatch(match.battingTeamId, `${battingTeam.name} won by ${10 - batInns.wickets} wickets`);
+                                                            } else if (batInns.runs === target - 1) {
+                                                                completeMatch(null, "Match Tied");
+                                                            } else {
+                                                                const margin = target - 1 - batInns.runs;
+                                                                completeMatch(match.bowlingTeamId, `${bowlingTeam.name} won by ${margin} runs`);
+                                                            }
+                                                        }
+                                                    }}>Confirm End Match</Button>
+                                                </DialogFooter>
+                                            </DialogContent>
+                                        </Dialog>
+                                    )}
+
+
+                                </div>
+
                             </div>
 
                             {/* Scoring Area */}
@@ -361,54 +368,60 @@ export default function MatchPage() {
                                     <Button
                                         key={r}
                                         onClick={() => handleScoring(r as BallEvent)}
+                                        disabled={!!isScoringDisabled}
                                         variant="outline"
                                         className="h-16 text-2xl font-bold hover:bg-primary hover:text-primary-foreground transition-colors"
                                     >
                                         {r}
                                     </Button>
                                 ))}
-                                <Button onClick={() => handleScoring('W')} variant="destructive" className="h-16 text-xl font-bold">OUT</Button>
-                                <Button onClick={() => handleScoring('WD')} variant="secondary" className="h-16 text-xl font-bold">WD</Button>
-                                <Button onClick={() => handleScoring('NB')} variant="secondary" className="h-16 text-xl font-bold">NB</Button>
+                                <Button onClick={() => handleScoring('W')} disabled={!!isScoringDisabled} variant="destructive" className="h-16 text-xl font-bold">OUT</Button>
+                                <Button onClick={() => handleScoring('WD')} disabled={!!isScoringDisabled} variant="secondary" className="h-16 text-xl font-bold">WD</Button>
+                                <Button onClick={() => handleScoring('NB')} disabled={!!isScoringDisabled} variant="secondary" className="h-16 text-xl font-bold">NB</Button>
                             </div>
 
                             <div className="grid grid-cols-5 gap-2 mb-8">
-                                <Button onClick={() => handleScoring('NB+1')} variant="secondary" size="sm" className="text-xs">NB+1</Button>
-                                <Button onClick={() => handleScoring('NB+2')} variant="secondary" size="sm" className="text-xs">NB+2</Button>
-                                <Button onClick={() => handleScoring('NB+3')} variant="secondary" size="sm" className="text-xs">NB+3</Button>
-                                <Button onClick={() => handleScoring('NB+4')} variant="secondary" size="sm" className="text-xs">NB+4</Button>
-                                <Button onClick={() => handleScoring('NB+6')} variant="secondary" size="sm" className="text-xs">NB+6</Button>
+                                <Button onClick={() => handleScoring('NB+1')} disabled={!!isScoringDisabled} variant="secondary" size="sm" className="text-xs">NB+1</Button>
+                                <Button onClick={() => handleScoring('NB+2')} disabled={!!isScoringDisabled} variant="secondary" size="sm" className="text-xs">NB+2</Button>
+                                <Button onClick={() => handleScoring('NB+3')} disabled={!!isScoringDisabled} variant="secondary" size="sm" className="text-xs">NB+3</Button>
+                                <Button onClick={() => handleScoring('NB+4')} disabled={!!isScoringDisabled} variant="secondary" size="sm" className="text-xs">NB+4</Button>
+                                <Button onClick={() => handleScoring('NB+6')} disabled={!!isScoringDisabled} variant="secondary" size="sm" className="text-xs">NB+6</Button>
                             </div>
 
                             <div className="flex justify-between items-center border-t pt-6 flex-wrap gap-2">
                                 <div className="flex gap-2 flex-wrap">
-                                    {!target && (
-                                        <Dialog open={isSwitchOpen} onOpenChange={setIsSwitchOpen}>
-                                            <DialogTrigger asChild>
-                                                <Button variant="secondary" className="gap-2">
-                                                    End Innings / Switch
-                                                </Button>
-                                            </DialogTrigger>
-                                            <DialogContent>
-                                                <DialogHeader>
-                                                    <DialogTitle>End Innings?</DialogTitle>
-                                                    <DialogDescription>
-                                                        Are you sure you want to end the innings? This will switch the batting and bowling teams.
-                                                    </DialogDescription>
-                                                </DialogHeader>
-                                                <DialogFooter>
-                                                    <DialogClose asChild>
-                                                        <Button variant="outline">Cancel</Button>
-                                                    </DialogClose>
-                                                    <Button onClick={() => { switchInnings(); setIsSwitchOpen(false); }}>Confirm Switch</Button>
-                                                </DialogFooter>
-                                            </DialogContent>
-                                        </Dialog>
+                                    {/* Action Buttons based on State */}
+
+
+
+
+                                    {!isMatchConcluded && !isFirstInningsComplete && !target && (
+                                        <Button variant="secondary" onClick={() => setIsSwitchOpen(true)}>
+                                            Switch Innings
+                                        </Button>
                                     )}
+
+                                    <Dialog open={isSwitchOpen} onOpenChange={setIsSwitchOpen}>
+                                        <DialogContent>
+                                            <DialogHeader>
+                                                <DialogTitle>End Innings?</DialogTitle>
+                                                <DialogDescription>
+                                                    Are you sure you want to end the innings? This will switch the batting and bowling teams.
+                                                </DialogDescription>
+                                            </DialogHeader>
+                                            <DialogFooter>
+                                                <DialogClose asChild>
+                                                    <Button variant="outline">Cancel</Button>
+                                                </DialogClose>
+                                                <Button onClick={() => { switchInnings(); setIsSwitchOpen(false); }}>Confirm Switch</Button>
+                                            </DialogFooter>
+                                        </DialogContent>
+                                    </Dialog>
+
 
                                     <Dialog open={isManualOpen} onOpenChange={setIsManualOpen}>
                                         <DialogTrigger asChild>
-                                            <Button variant="outline" className="gap-2">
+                                            <Button variant="outline" className="gap-2" disabled={!!isScoringDisabled}>
                                                 + Manual
                                             </Button>
                                         </DialogTrigger>
@@ -471,19 +484,48 @@ export default function MatchPage() {
                                         <RotateCcw className="w-4 h-4" /> Undo
                                     </Button>
                                 </div>
-
-
                             </div>
                         </div>
                     )}
 
                     {match.status === 'completed' && (
-                        <div className="text-center py-12">
+                        <div className="text-center py-8">
                             <div className="inline-flex items-center justify-center p-4 bg-green-500/10 rounded-full mb-6 text-green-500">
                                 <Trophy className="w-12 h-12" />
                             </div>
                             <h3 className="text-2xl font-bold text-green-500 mb-2">Match Completed</h3>
-                            <p className="text-4xl font-black mb-8">{match.result}</p>
+                            <p className="text-3xl font-black mb-8">{match.result}</p>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8 text-left">
+                                {/* Team A Score */}
+                                <div className={`p-6 rounded-xl border ${match.winnerId === teamA.id ? 'bg-green-500/5 border-green-500/20' : 'bg-card'}`}>
+                                    <div className="flex justify-between items-start mb-4">
+                                        <h4 className="font-bold text-xl">{teamA.name}</h4>
+                                        {match.winnerId === teamA.id && <Badge className="bg-green-500">Winner</Badge>}
+                                    </div>
+                                    <div className="text-4xl font-black mb-1">
+                                        {match.innings[teamA.id]?.runs || 0}/{match.innings[teamA.id]?.wickets || 0}
+                                    </div>
+                                    <div className="text-muted-foreground font-mono">
+                                        {formatOvers(match.innings[teamA.id]?.ballsFaced || 0)} Overs
+                                    </div>
+                                </div>
+
+                                {/* Team B Score */}
+                                <div className={`p-6 rounded-xl border ${match.winnerId === teamB.id ? 'bg-green-500/5 border-green-500/20' : 'bg-card'}`}>
+                                    <div className="flex justify-between items-start mb-4">
+                                        <h4 className="font-bold text-xl">{teamB.name}</h4>
+                                        {match.winnerId === teamB.id && <Badge className="bg-green-500">Winner</Badge>}
+                                    </div>
+                                    <div className="text-4xl font-black mb-1">
+                                        {match.innings[teamB.id]?.runs || 0}/{match.innings[teamB.id]?.wickets || 0}
+                                    </div>
+                                    <div className="text-muted-foreground font-mono">
+                                        {formatOvers(match.innings[teamB.id]?.ballsFaced || 0)} Overs
+                                    </div>
+                                </div>
+                            </div>
+
                             <Link href="/">
                                 <Button size="lg" className="px-8">Back to Dashboard</Button>
                             </Link>
