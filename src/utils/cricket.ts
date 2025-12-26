@@ -140,15 +140,55 @@ export const calculateScoreFromHistory = (history: import('@/types').BallEvent[]
     let ballsFaced = 0; // Legal balls
 
     history.forEach(event => {
-        if (event.startsWith('NB+') || event.startsWith('WD+')) {
+        // Handle Wicket + runs (e.g., W+1, W+2)
+        if (event.startsWith('W+')) {
             const extraRuns = parseInt(event.split('+')[1]);
-            runs += 1 + extraRuns;
-        } else if (event === 'WD' || event === 'NB') {
+            wickets += 1;
+            runs += extraRuns;
+            ballsFaced += 1; // Wicket counts as a legal ball
+        }
+        // Handle Wide + wicket (WD+W)
+        else if (event === 'WD+W') {
+            runs += 1; // Wide run
+            wickets += 1;
+            // No legal ball for wide
+        }
+        // Handle Wide + runs (e.g., WD+1, WD+2, WD+3)
+        else if (event.startsWith('WD+')) {
+            const extraRuns = parseInt(event.split('+')[1]);
+            runs += 1 + extraRuns; // 1 for wide + extra runs
+            // No legal ball for wide
+        }
+        // Handle No Ball + wicket (NB+W) - counts as legal ball because it's a run out
+        else if (event === 'NB+W') {
+            runs += 1; // No ball run
+            wickets += 1;
+            ballsFaced += 1; // Counts as legal ball for run out
+        }
+        // Handle No Ball + wicket + runs (NB+W+1) - counts as legal ball because it's a run out
+        else if (event === 'NB+W+1') {
+            runs += 1 + 1; // No ball run + 1 run before run out
+            wickets += 1;
+            ballsFaced += 1; // Counts as legal ball for run out
+        }
+        // Handle No Ball + runs (e.g., NB+1, NB+2, NB+3, NB+4, NB+6)
+        else if (event.startsWith('NB+')) {
+            const extraRuns = parseInt(event.split('+')[1]);
+            runs += 1 + extraRuns; // 1 for no ball + extra runs
+            // No legal ball for no ball
+        }
+        // Handle simple Wide or No Ball
+        else if (event === 'WD' || event === 'NB') {
             runs += 1;
-        } else if (event === 'W') {
+            // No legal ball for wide/no ball
+        }
+        // Handle simple Wicket
+        else if (event === 'W') {
             wickets += 1;
             ballsFaced += 1;
-        } else {
+        }
+        // Handle regular runs (0-6)
+        else {
             runs += parseInt(event);
             ballsFaced += 1;
         }
